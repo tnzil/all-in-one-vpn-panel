@@ -29,7 +29,12 @@ INSTALL_DIR="/opt/vpn-panel"
 DATA_DIR="$INSTALL_DIR/data"
 CERTS_DIR="$INSTALL_DIR/certs"
 CONFIGS_DIR="$INSTALL_DIR/configs"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+SCRIPT_SOURCE="${0:-}"
+if [ "${BASH_SOURCE+set}" = set ]; then
+    SCRIPT_SOURCE="${BASH_SOURCE[0]:-$SCRIPT_SOURCE}"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 PUBLIC_RELEASE_REPO="${PUBLIC_RELEASE_REPO:-tnzil/all-in-one-vpn-panel}"
 PUBLIC_RELEASE_BUNDLE="${PUBLIC_RELEASE_BUNDLE:-vpn-panel-bundle.tar.gz}"
 
