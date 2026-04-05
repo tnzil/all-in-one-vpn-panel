@@ -29,6 +29,9 @@ INSTALL_DIR="/opt/vpn-panel"
 DATA_DIR="$INSTALL_DIR/data"
 CERTS_DIR="$INSTALL_DIR/certs"
 CONFIGS_DIR="$INSTALL_DIR/configs"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PUBLIC_RELEASE_REPO="${PUBLIC_RELEASE_REPO:-tnzil/all-in-one-vpn-panel}"
+PUBLIC_RELEASE_BUNDLE="${PUBLIC_RELEASE_BUNDLE:-vpn-panel-bundle.tar.gz}"
 
 # ─── Step tracking ───
 STEP_CURRENT=0
@@ -1017,11 +1020,30 @@ EOF
 task "Writing backend configuration" _write_backend_config
 
 # ──────────────────────────────────────────────────────────
+#  Fetch deployment bundle when running standalone
+# ──────────────────────────────────────────────────────────
+
+_fetch_release_bundle() {
+    [ -f "$SCRIPT_DIR/docker-compose.yml" ] && [ -d "$SCRIPT_DIR/cmd" ] && return 0
+
+    local bundle_dir bundle_url tmp_bundle
+    bundle_dir=$(mktemp -d)
+    bundle_url="https://github.com/${PUBLIC_RELEASE_REPO}/releases/latest/download/${PUBLIC_RELEASE_BUNDLE}"
+    tmp_bundle="$bundle_dir/${PUBLIC_RELEASE_BUNDLE}"
+
+    curl -fsSL "$bundle_url" -o "$tmp_bundle"
+    tar -xzf "$tmp_bundle" -C "$bundle_dir"
+    SCRIPT_DIR="$bundle_dir"
+}
+
+# (not counted in STEP_TOTAL — near-instant)
+_fetch_release_bundle
+
+# ──────────────────────────────────────────────────────────
 #  Copy project source files
 # ──────────────────────────────────────────────────────────
 
 _copy_source() {
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     if [ "$SCRIPT_DIR" = "$INSTALL_DIR" ]; then
         return 0
     fi
