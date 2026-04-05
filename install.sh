@@ -530,8 +530,12 @@ EXTEOF
         fi
     fi
 
-    # DH params (takes a moment)
-    openssl dhparam -out "$CERTS_DIR/dh.pem" 2048 2>/dev/null
+    # DH params — reuse bundled copy when available (saves ~30 s)
+    if [ -f "$SCRIPT_DIR/dh.pem" ]; then
+        cp "$SCRIPT_DIR/dh.pem" "$CERTS_DIR/dh.pem"
+    elif [ ! -f "$CERTS_DIR/dh.pem" ]; then
+        openssl dhparam -out "$CERTS_DIR/dh.pem" 2048 2>/dev/null
+    fi
 
     # OpenVPN TLS auth key
     openvpn --genkey secret "$CERTS_DIR/ta.key" 2>/dev/null || \
@@ -1138,7 +1142,7 @@ _docker_build() {
         return 0
     fi
 
-    docker compose build --parallel "${build_services[@]}" 2>&1
+    DOCKER_BUILDKIT=1 docker compose build --parallel "${build_services[@]}" 2>&1
     docker compose up -d --force-recreate --remove-orphans 2>&1
 }
 
