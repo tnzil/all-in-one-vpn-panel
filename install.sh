@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # ══════════════════════════════════════════════════════════
-#  DigitalD.tech VPN Panel Installer — Modern UI
+#  DigitalD.tech VPN Panel Installer
 # ══════════════════════════════════════════════════════════
 
-# ─── Terminal capabilities ───
+# ─── Terminal colours ───
 BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
@@ -33,21 +33,37 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PUBLIC_RELEASE_REPO="${PUBLIC_RELEASE_REPO:-tnzil/all-in-one-vpn-panel}"
 PUBLIC_RELEASE_BUNDLE="${PUBLIC_RELEASE_BUNDLE:-vpn-panel-bundle.tar.gz}"
 
-# ─── Step tracking ───
+# ─── Step + timer tracking ───
 STEP_CURRENT=0
-STEP_TOTAL=15
+STEP_TOTAL=16
 STEP_START_TIME=0
+INSTALL_START_TIME=$(date +%s%N 2>/dev/null) || INSTALL_START_TIME=$(($(date +%s) * 1000000000))
 
 # ─── Spinner state ───
 SPINNER_PID=""
 
-# ─── Utilities ───
+# ══════════════════════════════════════════════════════════
+#  UI helpers
+# ══════════════════════════════════════════════════════════
 
+# Per-step elapsed (millisecond precision)
 _elapsed() {
-    local end now diff
+    local now diff
     now=$(date +%s%N 2>/dev/null) || now=$(($(date +%s) * 1000000000))
     diff=$(( (now - STEP_START_TIME) / 1000000 ))
     printf "%d.%ds" $((diff / 1000)) $(( (diff % 1000) / 100 ))
+}
+
+# Total install elapsed (second precision)
+_total_elapsed() {
+    local now diff
+    now=$(date +%s%N 2>/dev/null) || now=$(($(date +%s) * 1000000000))
+    diff=$(( (now - INSTALL_START_TIME) / 1000000000 ))
+    if [ "$diff" -ge 60 ]; then
+        printf "%dm%02ds" $(( diff / 60 )) $(( diff % 60 ))
+    else
+        printf "%ds" "$diff"
+    fi
 }
 
 _stop_spinner() {
@@ -64,7 +80,6 @@ _start_spinner() {
     local idx=0
     local padded
     padded=$(printf "%-${col_w}s" "$label")
-    # Print the label line (no newline) then spin in place
     printf "  ${DIM}[%2d/%-2d]${NC}  ${WHITE}%s${NC}" "$STEP_CURRENT" "$STEP_TOTAL" "$padded"
     (
         while true; do
@@ -77,8 +92,36 @@ _start_spinner() {
     SPINNER_PID=$!
 }
 
+# Full-width progress bar printed after each completed step
+_draw_progress() {
+    local done=$STEP_CURRENT total=$STEP_TOTAL
+    [ "$total" -eq 0 ] && return
+    local pct=$(( done * 100 / total ))
+
+    local term_w=80
+    if command -v tput >/dev/null 2>&1; then
+        if term_w_candidate=$(tput cols 2>/dev/null); then
+            term_w=$term_w_candidate
+        fi
+    fi
+    local bar_w=$(( term_w - 28 ))
+    [ "$bar_w" -lt 10 ] && bar_w=10
+    [ "$bar_w" -gt 54 ] && bar_w=54
+
+    local filled=$(( done * bar_w / total ))
+    local empty=$(( bar_w - filled ))
+
+    local filled_str="" empty_str="" i=0
+    while [ $i -lt $filled ]; do filled_str="${filled_str}█"; i=$(( i + 1 )); done
+    i=0
+    while [ $i -lt $empty ];  do empty_str="${empty_str}░";  i=$(( i + 1 )); done
+
+    printf "  ${GREEN}%s${DIM}%s${NC}  ${DIM}%d/%d  %d%%  +%s${NC}\n" \
+        "$filled_str" "$empty_str" "$done" "$total" "$pct" "$(_total_elapsed)"
+}
+
 _finish_step() {
-    local status="$1"   # ok | fail | skip
+    local status="$1"
     local label="$2"
     local col_w=44
     local padded elapsed_str
@@ -101,9 +144,11 @@ _finish_step() {
                 "$STEP_CURRENT" "$STEP_TOTAL" "$padded" "$SYM_FAIL" "$elapsed_str"
             ;;
     esac
+
+    _draw_progress
 }
 
-# Run a task: show spinner, execute, show result
+# Run a task: show spinner, execute, show result + progress
 # Usage: task "Label" command [args...]
 task() {
     local label="$1"
@@ -123,8 +168,11 @@ task() {
         local exit_code=$?
         _finish_step fail "$label"
         echo ""
-        echo -e "  ${RED}Error output:${NC}"
-        tail -20 "$log_file" | sed 's/^/    /'
+        printf "  ${RED}┌─ Error ─────────────────────────────────────────────┐${NC}\n"
+        tail -15 "$log_file" | while IFS= read -r errline; do
+            printf "  ${RED}│${NC}  %s\n" "$errline"
+        done
+        printf "  ${RED}└─────────────────────────────────────────────────────┘${NC}\n"
         rm -f "$log_file"
         echo ""
         exit "$exit_code"
@@ -140,6 +188,25 @@ task_skip() {
     _finish_step skip "$label"
 }
 
+# Phase section divider
+section() {
+    local label="$1"
+    local term_w
+    local term_w=80
+    if command -v tput >/dev/null 2>&1; then
+        if term_w_candidate=$(tput cols 2>/dev/null); then
+            term_w=$term_w_candidate
+        fi
+    fi
+    local fill_len=$(( term_w - ${#label} - 8 ))
+    [ "$fill_len" -lt 4 ] && fill_len=4
+    local dashes="" i=0
+    while [ $i -lt $fill_len ]; do dashes="${dashes}─"; i=$(( i + 1 )); done
+    echo ""
+    printf "  ${DIM}${CYAN}── %s %s${NC}\n" "$label" "$dashes"
+    echo ""
+}
+
 warn() { echo -e "  ${YELLOW}${SYM_DOT}${NC}  ${YELLOW}$*${NC}"; }
 die()  {
     _stop_spinner
@@ -150,13 +217,14 @@ die()  {
 }
 
 # ══════════════════════════════════════════════════════════
-#  Header
+#  Header banner
 # ══════════════════════════════════════════════════════════
 
 echo ""
-echo -e "  ${BOLD}${BLUE}┌──────────────────────────────────────────────┐${NC}"
-echo -e "  ${BOLD}${BLUE}│${NC}  ${BOLD}${WHITE}🛡  DigitalD.tech VPN Panel${NC}  ${DIM}│  One-command installer${NC}          ${BOLD}${BLUE}│${NC}"
-echo -e "  ${BOLD}${BLUE}└──────────────────────────────────────────────┘${NC}"
+echo -e "  ${BOLD}${BLUE}╔══════════════════════════════════════════════╗${NC}"
+echo -e "  ${BOLD}${BLUE}║${NC}  ${BOLD}${WHITE}🛡  DigitalD.tech VPN Panel${NC}                    ${BOLD}${BLUE}║${NC}"
+echo -e "  ${BOLD}${BLUE}║${NC}  ${DIM}One-command installer  •  Ubuntu 22.04${NC}        ${BOLD}${BLUE}║${NC}"
+echo -e "  ${BOLD}${BLUE}╚══════════════════════════════════════════════╝${NC}"
 echo ""
 
 # ─── Pre-flight checks (no spinner — fast/instant) ───
@@ -182,11 +250,12 @@ PUBLIC_HOST="${PUBLIC_HOST:-$SERVER_IP}"
 
 echo -e "  ${DIM}Server IP detected:${NC}  ${CYAN}${SERVER_IP}${NC}"
 echo -e "  ${DIM}Public endpoint:${NC}   ${CYAN}${PUBLIC_HOST}${NC}"
-echo ""
 
 # ══════════════════════════════════════════════════════════
-#  Step 1 — Docker
+#  Phase 1 — System Setup
 # ══════════════════════════════════════════════════════════
+
+section "SYSTEM SETUP"
 
 _install_docker() {
     if command -v docker &>/dev/null; then
@@ -211,9 +280,7 @@ else
     task "Installing Docker" _install_docker
 fi
 
-# ══════════════════════════════════════════════════════════
-#  Step 2 — System dependencies
-# ══════════════════════════════════════════════════════════
+# ── Step 2 — System dependencies ──────────────────────────
 
 _install_deps() {
     apt-get install -y -qq openssl wireguard-tools openvpn python3-bcrypt certbot 2>/dev/null || true
@@ -227,9 +294,7 @@ _install_deps() {
 
 task "Installing system dependencies" _install_deps
 
-# ══════════════════════════════════════════════════════════
-#  Step 3 — Directories
-# ══════════════════════════════════════════════════════════
+# ── Step 3 — Directories ──────────────────────────────────
 
 _create_dirs() {
     mkdir -p "$DATA_DIR" "$CERTS_DIR"
@@ -247,9 +312,7 @@ _create_dirs() {
 
 task "Creating directory structure" _create_dirs
 
-# ══════════════════════════════════════════════════════════
-#  Step 3b — Host sysctls
-# ══════════════════════════════════════════════════════════
+# ── Step 3b — Host sysctls ────────────────────────────────
 
 _configure_host_sysctls() {
     cat > /etc/sysctl.d/99-vpn-panel.conf <<'EOF'
@@ -261,9 +324,7 @@ EOF
 
 task "Configuring host sysctls" _configure_host_sysctls
 
-# ══════════════════════════════════════════════════════════
-#  Step 3c — Host NAT
-# ══════════════════════════════════════════════════════════
+# ── Step 3c — Host NAT ────────────────────────────────────
 
 _configure_host_nat() {
     local ext_if
@@ -278,9 +339,7 @@ _configure_host_nat() {
 
 task "Configuring host NAT" _configure_host_nat
 
-# ══════════════════════════════════════════════════════════
-#  Step 3d — Host forwarding
-# ══════════════════════════════════════════════════════════
+# ── Step 3d — Host forwarding ─────────────────────────────
 
 _configure_host_forwarding() {
     for subnet in 10.8.0.0/24 10.9.0.0/24 10.10.10.0/24 10.20.20.0/24 10.66.66.0/24 10.66.67.0/24; do
@@ -298,9 +357,7 @@ _configure_host_forwarding() {
 
 task "Configuring host forwarding" _configure_host_forwarding
 
-# ══════════════════════════════════════════════════════════
-#  Step 3e — Firewall persistence
-# ══════════════════════════════════════════════════════════
+# ── Step 3e — Firewall persistence ───────────────────────
 
 _install_firewall_persistence() {
     cat > /usr/local/sbin/vpn-panel-fw.sh <<'EOF'
@@ -347,9 +404,7 @@ EOF
 
 task "Installing firewall persistence" _install_firewall_persistence
 
-# ══════════════════════════════════════════════════════════
-#  Step 3f — Docker bridge networking
-# ══════════════════════════════════════════════════════════
+# ── Step 3f — Docker bridge networking ───────────────────
 
 _ensure_docker_bridge_networking() {
     command -v docker >/dev/null 2>&1 || return 0
@@ -368,8 +423,12 @@ _ensure_docker_bridge_networking() {
 task "Verifying Docker bridge networking" _ensure_docker_bridge_networking
 
 # ══════════════════════════════════════════════════════════
-#  Step 4 — Credentials
+#  Phase 2 — Credentials & Certificates
 # ══════════════════════════════════════════════════════════
+
+section "CREDENTIALS & CERTIFICATES"
+
+# ── Step 4 — Credentials ─────────────────────────────────
 
 _gen_credentials() {
     ADMIN_USER="admin"
@@ -396,13 +455,13 @@ if _gen_credentials 2>/tmp/vpn-cred.err; then
     _finish_step ok "Generating credentials"
 else
     _finish_step fail "Generating credentials"
-    cat /tmp/vpn-cred.err | sed 's/^/    /'
+    printf "  ${RED}┌─ Error ─────────────────────────────────────────────┐${NC}\n"
+    while IFS= read -r errline; do printf "  ${RED}│${NC}  %s\n" "$errline"; done < /tmp/vpn-cred.err
+    printf "  ${RED}└─────────────────────────────────────────────────────┘${NC}\n"
     exit 1
 fi
 
-# ══════════════════════════════════════════════════════════
-#  Step 5 — Certificates
-# ══════════════════════════════════════════════════════════
+# ── Step 5 — TLS certificates & DH params ────────────────
 
 _gen_certs() {
     local server_san ikev2_san certbot_args le_dir
@@ -447,6 +506,7 @@ EXTEOF
         -CA "$CERTS_DIR/ca.crt" -CAkey "$CERTS_DIR/ca.key" -CAcreateserial \
         -out "$CERTS_DIR/ikev2-server.crt" -days 730 \
         -extfile /tmp/ikev2_ext.cnf 2>/dev/null
+
     cp "$CERTS_DIR/ca.crt" "$CERTS_DIR/ikev2-ca.crt"
     cp "$CERTS_DIR/ca.crt" "$CERTS_DIR/ikev2-client-ca.crt"
 
@@ -485,9 +545,7 @@ EXTEOF
 
 task "Generating TLS certificates & DH params" _gen_certs
 
-# ══════════════════════════════════════════════════════════
-#  Step 5b — Let's Encrypt renewal hook
-# ══════════════════════════════════════════════════════════
+# ── Step 5b — Let's Encrypt renewal hook ─────────────────
 
 _install_le_renewal_hook() {
     [ "$PUBLIC_HOST" != "$SERVER_IP" ] || return 0
@@ -526,9 +584,7 @@ else
     task_skip "Let's Encrypt renewal hook"
 fi
 
-# ══════════════════════════════════════════════════════════
-#  Step 6 — WireGuard keys + Xray paths
-# ══════════════════════════════════════════════════════════
+# ── Step 6 — WireGuard keys + Xray paths ─────────────────
 
 _gen_wg_and_paths() {
     WG_PRIV=$(wg genkey)
@@ -561,6 +617,7 @@ _gen_wg_and_paths() {
     AWG_H3=$(_gen_awg_h); AWG_H4=$(_gen_awg_h)
 }
 
+# Run synchronously so variables are exported to current shell
 STEP_CURRENT=$(( STEP_CURRENT + 1 ))
 STEP_START_TIME=$(date +%s%N 2>/dev/null) || STEP_START_TIME=$(($(date +%s) * 1000000000))
 _start_spinner "Generating WireGuard keys & Xray paths"
@@ -568,13 +625,19 @@ if _gen_wg_and_paths 2>/tmp/vpn-wg.err; then
     _finish_step ok "Generating WireGuard keys & Xray paths"
 else
     _finish_step fail "Generating WireGuard keys & Xray paths"
-    cat /tmp/vpn-wg.err | sed 's/^/    /'
+    printf "  ${RED}┌─ Error ─────────────────────────────────────────────┐${NC}\n"
+    while IFS= read -r errline; do printf "  ${RED}│${NC}  %s\n" "$errline"; done < /tmp/vpn-wg.err
+    printf "  ${RED}└─────────────────────────────────────────────────────┘${NC}\n"
     exit 1
 fi
 
 # ══════════════════════════════════════════════════════════
-#  Step 7 — Write all config files
+#  Phase 3 — Configuration files
 # ══════════════════════════════════════════════════════════
+
+section "CONFIGURATION"
+
+# ── Step 7 — Write all protocol config files ─────────────
 
 _write_configs() {
 # ── HAProxy ──
@@ -937,9 +1000,7 @@ EOF
 
 task "Writing protocol configuration files" _write_configs
 
-# ══════════════════════════════════════════════════════════
-#  Step 8 — Backend config.json
-# ══════════════════════════════════════════════════════════
+# ── Step 8 — Backend config.json ─────────────────────────
 
 _write_backend_config() {
 cat > "$DATA_DIR/config.json" <<EOF
@@ -1057,13 +1118,17 @@ _copy_source() {
     cp -r "$SCRIPT_DIR/web" "$INSTALL_DIR/"
 }
 
-# (not counted in STEP_TOTAL — near-instant)
-STEP_CURRENT=$(( STEP_CURRENT + 0 ))  # no increment; absorbed into step 8
+# (not counted in STEP_TOTAL — absorbed into step 8)
+STEP_CURRENT=$(( STEP_CURRENT + 0 ))
 _copy_source
 
 # ══════════════════════════════════════════════════════════
-#  Step 9 — Build & launch containers
+#  Phase 4 — Build & Deploy
 # ══════════════════════════════════════════════════════════
+
+section "BUILD & DEPLOY"
+
+# ── Step 9 — Build & launch containers ───────────────────
 
 _docker_build() {
     cd "$INSTALL_DIR"
@@ -1079,9 +1144,7 @@ _docker_build() {
 
 task "Building & launching containers" _docker_build
 
-# ══════════════════════════════════════════════════════════
-#  Step 10 — Initialize default user
-# ══════════════════════════════════════════════════════════
+# ── Step 10 — Wait for backend & create default user ─────
 
 _wait_and_init() {
     # Wait up to 60s for backend
@@ -1107,7 +1170,9 @@ if _wait_and_init 2>/tmp/vpn-init.err; then
     _finish_step ok "Waiting for backend & creating default user"
 else
     _finish_step fail "Waiting for backend & creating default user"
-    cat /tmp/vpn-init.err | sed 's/^/    /'
+    printf "  ${RED}┌─ Error ─────────────────────────────────────────────┐${NC}\n"
+    while IFS= read -r errline; do printf "  ${RED}│${NC}  %s\n" "$errline"; done < /tmp/vpn-init.err
+    printf "  ${RED}└─────────────────────────────────────────────────────┘${NC}\n"
     exit 1
 fi
 
@@ -1115,32 +1180,40 @@ fi
 #  Summary
 # ══════════════════════════════════════════════════════════
 
+TOTAL_TIME=$(_total_elapsed)
+
 echo ""
-echo -e "  ${BOLD}${GREEN}┌──────────────────────────────────────────────────────┐${NC}"
-echo -e "  ${BOLD}${GREEN}│${NC}  ${BOLD}${WHITE}✓  DigitalD.tech VPN Panel installed successfully${NC}                  ${BOLD}${GREEN}│${NC}"
-echo -e "  ${BOLD}${GREEN}└──────────────────────────────────────────────────────┘${NC}"
+echo -e "  ${BOLD}${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
+echo -e "  ${BOLD}${GREEN}║${NC}  ${BOLD}${WHITE}✓  Installation complete${NC}  ${DIM}(${TOTAL_TIME})${NC}                      ${BOLD}${GREEN}║${NC}"
+echo -e "  ${BOLD}${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  ${BOLD}${WHITE}Access${NC}"
-echo -e "  ${DIM}──────────────────────────────────────${NC}"
-echo -e "  ${DIM}Panel URL${NC}    ${CYAN}https://${PUBLIC_HOST}:8443/${NC}"
-echo -e "  ${DIM}Username${NC}     ${WHITE}${ADMIN_USER}${NC}"
-echo -e "  ${DIM}Password${NC}     ${BOLD}${WHITE}${ADMIN_PASS}${NC}"
+
+echo -e "  ${BOLD}${WHITE}Dashboard${NC}"
+echo -e "  ${DIM}┌──────────────────────────────────────────────────────┐${NC}"
+echo -e "  ${DIM}│${NC}  ${DIM}URL     ${NC}  ${CYAN}https://${PUBLIC_HOST}:8443/${NC}"
+echo -e "  ${DIM}│${NC}  ${DIM}User    ${NC}  ${WHITE}${ADMIN_USER}${NC}"
+echo -e "  ${DIM}│${NC}  ${DIM}Pass    ${NC}  ${BOLD}${GREEN}${ADMIN_PASS}${NC}"
+echo -e "  ${DIM}└──────────────────────────────────────────────────────┘${NC}"
 echo ""
+
 if [ -n "$SHARE_URL" ]; then
-echo -e "  ${BOLD}${WHITE}Default User Configs${NC}"
-echo -e "  ${DIM}──────────────────────────────────────${NC}"
-echo -e "  ${CYAN}${SHARE_URL}${NC}"
+echo -e "  ${BOLD}${WHITE}Default user config URL${NC}  ${DIM}(24h shareable link)${NC}"
+echo -e "  ${DIM}┌──────────────────────────────────────────────────────┐${NC}"
+echo -e "  ${DIM}│${NC}  ${CYAN}${SHARE_URL}${NC}"
+echo -e "  ${DIM}└──────────────────────────────────────────────────────┘${NC}"
 echo ""
 fi
-echo -e "  ${BOLD}${WHITE}Protocols${NC}"
-echo -e "  ${DIM}──────────────────────────────────────${NC}"
-echo -e "  ${GREEN}${SYM_DOT}${NC}  OpenVPN TCP    ${DIM}11194${NC}"
-echo -e "  ${GREEN}${SYM_DOT}${NC}  OpenVPN UDP    ${DIM}1194${NC}"
-echo -e "  ${GREEN}${SYM_DOT}${NC}  WireGuard      ${DIM}51820/UDP${NC}"
-echo -e "  ${GREEN}${SYM_DOT}${NC}  IKEv2          ${DIM}500/UDP, 4500/UDP${NC}"
-echo -e "  ${GREEN}${SYM_DOT}${NC}  Xray (Hiddify) ${DIM}8443 via Nginx (WS only)${NC}"
-echo -e "  ${GREEN}${SYM_DOT}${NC}  OpenConnect    ${DIM}443 direct${NC}"
-echo -e "  ${GREEN}${SYM_DOT}${NC}  AmneziaWG      ${DIM}51821/UDP (obfuscated)${NC}"
+
+echo -e "  ${BOLD}${WHITE}Active protocols${NC}"
+echo -e "  ${DIM}┌────────────────────────────────────────┬─────────────┐${NC}"
+echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  OpenVPN TCP              ${DIM}│${NC}  ${DIM}11194/TCP  ${NC}  ${DIM}│${NC}"
+echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  OpenVPN UDP              ${DIM}│${NC}  ${DIM}1194/UDP   ${NC}  ${DIM}│${NC}"
+echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  WireGuard                ${DIM}│${NC}  ${DIM}51820/UDP  ${NC}  ${DIM}│${NC}"
+echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  IKEv2/IPSec              ${DIM}│${NC}  ${DIM}500, 4500  ${NC}  ${DIM}│${NC}"
+echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  Xray  ${DIM}(VLESS/VMess/Trojan)${NC}  ${DIM}│${NC}  ${DIM}8443/TCP   ${NC}  ${DIM}│${NC}"
+echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  OpenConnect              ${DIM}│${NC}  ${DIM}443/TCP    ${NC}  ${DIM}│${NC}"
+echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  AmneziaWG  ${DIM}(obfuscated)${NC}   ${DIM}│${NC}  ${DIM}51821/UDP  ${NC}  ${DIM}│${NC}"
+echo -e "  ${DIM}└────────────────────────────────────────┴─────────────┘${NC}"
 echo ""
-echo -e "  ${DIM}Note: Accept the self-signed certificate in your browser.${NC}"
+echo -e "  ${DIM}${SYM_ARROW}  Accept the self-signed certificate when opening the dashboard.${NC}"
 echo ""
