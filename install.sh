@@ -81,15 +81,13 @@ _stop_spinner() {
 
 _start_spinner() {
     local label="$1"
-    local col_w=44
+    local col_w=48
     local idx=0
     local padded
     padded=$(printf "%-${col_w}s" "$label")
-    printf "  ${DIM}[%2d/%-2d]${NC}  ${WHITE}%s${NC}" "$STEP_CURRENT" "$STEP_TOTAL" "$padded"
     (
         while true; do
-            printf "\r  ${DIM}[%2d/%-2d]${NC}  ${WHITE}%s${NC}  ${CYAN}%s${NC}" \
-                "$STEP_CURRENT" "$STEP_TOTAL" "$padded" "${SPINNER_FRAMES[$idx]}"
+            printf "\r  ${DIM}%s${NC} ${CYAN}%s${NC}" "$padded" "${SPINNER_FRAMES[$idx]}"
             idx=$(( (idx + 1) % 10 ))
             sleep 0.08
         done
@@ -97,38 +95,11 @@ _start_spinner() {
     SPINNER_PID=$!
 }
 
-# Full-width progress bar printed after each completed step
-_draw_progress() {
-    local done=$STEP_CURRENT total=$STEP_TOTAL
-    [ "$total" -eq 0 ] && return
-    local pct=$(( done * 100 / total ))
-
-    local term_w=80
-    if command -v tput >/dev/null 2>&1; then
-        if term_w_candidate=$(tput cols 2>/dev/null); then
-            term_w=$term_w_candidate
-        fi
-    fi
-    local bar_w=$(( term_w - 28 ))
-    [ "$bar_w" -lt 10 ] && bar_w=10
-    [ "$bar_w" -gt 54 ] && bar_w=54
-
-    local filled=$(( done * bar_w / total ))
-    local empty=$(( bar_w - filled ))
-
-    local filled_str="" empty_str="" i=0
-    while [ $i -lt $filled ]; do filled_str="${filled_str}█"; i=$(( i + 1 )); done
-    i=0
-    while [ $i -lt $empty ];  do empty_str="${empty_str}░";  i=$(( i + 1 )); done
-
-    printf "  ${GREEN}%s${DIM}%s${NC}  ${DIM}%d/%d  %d%%  +%s${NC}\n" \
-        "$filled_str" "$empty_str" "$done" "$total" "$pct" "$(_total_elapsed)"
-}
 
 _finish_step() {
     local status="$1"
     local label="$2"
-    local col_w=44
+    local col_w=48
     local padded elapsed_str
     padded=$(printf "%-${col_w}s" "$label")
     elapsed_str=$(_elapsed)
@@ -137,20 +108,18 @@ _finish_step() {
 
     case "$status" in
         ok)
-            printf "\r  ${DIM}[%2d/%-2d]${NC}  ${WHITE}%s${NC}  ${GREEN}%s${NC}  ${DIM}%s${NC}\n" \
-                "$STEP_CURRENT" "$STEP_TOTAL" "$padded" "$SYM_OK" "$elapsed_str"
+            printf "\r  ${GREEN}${SYM_OK}${NC}  %s ${DIM}%s${NC}\n" \
+                "$padded" "$elapsed_str"
             ;;
         skip)
-            printf "\r  ${DIM}[%2d/%-2d]${NC}  ${WHITE}%s${NC}  ${YELLOW}─${NC}  ${DIM}skipped${NC}\n" \
-                "$STEP_CURRENT" "$STEP_TOTAL" "$padded"
+            printf "\r  ${DIM}○${NC}  ${DIM}%s${NC} ${DIM}skipped${NC}\n" \
+                "$padded"
             ;;
         fail)
-            printf "\r  ${DIM}[%2d/%-2d]${NC}  ${WHITE}%s${NC}  ${RED}%s${NC}  ${DIM}%s${NC}\n" \
-                "$STEP_CURRENT" "$STEP_TOTAL" "$padded" "$SYM_FAIL" "$elapsed_str"
+            printf "\r  ${RED}${SYM_FAIL}${NC}  %s ${DIM}%s${NC}\n" \
+                "$padded" "$elapsed_str"
             ;;
     esac
-
-    _draw_progress
 }
 
 # Run a task: show spinner, execute, show result + progress
@@ -196,19 +165,8 @@ task_skip() {
 # Phase section divider
 section() {
     local label="$1"
-    local term_w
-    local term_w=80
-    if command -v tput >/dev/null 2>&1; then
-        if term_w_candidate=$(tput cols 2>/dev/null); then
-            term_w=$term_w_candidate
-        fi
-    fi
-    local fill_len=$(( term_w - ${#label} - 8 ))
-    [ "$fill_len" -lt 4 ] && fill_len=4
-    local dashes="" i=0
-    while [ $i -lt $fill_len ]; do dashes="${dashes}─"; i=$(( i + 1 )); done
     echo ""
-    printf "  ${DIM}${CYAN}── %s %s${NC}\n" "$label" "$dashes"
+    printf "  ${BOLD}%s${NC}\n" "$label"
     echo ""
 }
 
@@ -1192,37 +1150,29 @@ fi
 TOTAL_TIME=$(_total_elapsed)
 
 echo ""
-echo -e "  ${BOLD}${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
-echo -e "  ${BOLD}${GREEN}║${NC}  ${BOLD}${WHITE}✓  Installation complete${NC}  ${DIM}(${TOTAL_TIME})${NC}                      ${BOLD}${GREEN}║${NC}"
-echo -e "  ${BOLD}${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
+printf "  ${GREEN}${SYM_OK}${NC}  ${BOLD}Installation complete${NC} ${DIM}in ${TOTAL_TIME}${NC}\n"
 echo ""
 
-echo -e "  ${BOLD}${WHITE}Dashboard${NC}"
-echo -e "  ${DIM}┌──────────────────────────────────────────────────────┐${NC}"
-echo -e "  ${DIM}│${NC}  ${DIM}URL     ${NC}  ${CYAN}https://${PUBLIC_HOST}:8443/${NC}"
-echo -e "  ${DIM}│${NC}  ${DIM}User    ${NC}  ${WHITE}${ADMIN_USER}${NC}"
-echo -e "  ${DIM}│${NC}  ${DIM}Pass    ${NC}  ${BOLD}${GREEN}${ADMIN_PASS}${NC}"
-echo -e "  ${DIM}└──────────────────────────────────────────────────────┘${NC}"
+printf "  ${BOLD}Dashboard${NC}\n"
+printf "    ${DIM}URL${NC}    https://${PUBLIC_HOST}:8443/\n"
+printf "    ${DIM}User${NC}   ${WHITE}${ADMIN_USER}${NC}\n"
+printf "    ${DIM}Pass${NC}   ${GREEN}${ADMIN_PASS}${NC}\n"
 echo ""
 
 if [ -n "$SHARE_URL" ]; then
-echo -e "  ${BOLD}${WHITE}Default user config URL${NC}  ${DIM}(24h shareable link)${NC}"
-echo -e "  ${DIM}┌──────────────────────────────────────────────────────┐${NC}"
-echo -e "  ${DIM}│${NC}  ${CYAN}${SHARE_URL}${NC}"
-echo -e "  ${DIM}└──────────────────────────────────────────────────────┘${NC}"
+printf "  ${BOLD}Share link${NC} ${DIM}(expires in 24h)${NC}\n"
+printf "    ${CYAN}${SHARE_URL}${NC}\n"
 echo ""
 fi
 
-echo -e "  ${BOLD}${WHITE}Active protocols${NC}"
-echo -e "  ${DIM}┌────────────────────────────────────────┬─────────────┐${NC}"
-echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  OpenVPN TCP              ${DIM}│${NC}  ${DIM}11194/TCP  ${NC}  ${DIM}│${NC}"
-echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  OpenVPN UDP              ${DIM}│${NC}  ${DIM}1194/UDP   ${NC}  ${DIM}│${NC}"
-echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  WireGuard                ${DIM}│${NC}  ${DIM}51820/UDP  ${NC}  ${DIM}│${NC}"
-echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  IKEv2/IPSec              ${DIM}│${NC}  ${DIM}500, 4500  ${NC}  ${DIM}│${NC}"
-echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  Xray  ${DIM}(VLESS/VMess/Trojan)${NC}  ${DIM}│${NC}  ${DIM}8443/TCP   ${NC}  ${DIM}│${NC}"
-echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  OpenConnect              ${DIM}│${NC}  ${DIM}443/TCP    ${NC}  ${DIM}│${NC}"
-echo -e "  ${DIM}│${NC}  ${GREEN}${SYM_OK}${NC}  AmneziaWG  ${DIM}(obfuscated)${NC}   ${DIM}│${NC}  ${DIM}51821/UDP  ${NC}  ${DIM}│${NC}"
-echo -e "  ${DIM}└────────────────────────────────────────┴─────────────┘${NC}"
+printf "  ${BOLD}Active protocols${NC}\n"
+printf "    ${GREEN}${SYM_OK}${NC} OpenVPN TCP              ${DIM}11194/tcp${NC}\n"
+printf "    ${GREEN}${SYM_OK}${NC} OpenVPN UDP              ${DIM}1194/udp${NC}\n"
+printf "    ${GREEN}${SYM_OK}${NC} WireGuard                ${DIM}51820/udp${NC}\n"
+printf "    ${GREEN}${SYM_OK}${NC} IKEv2/IPSec              ${DIM}500, 4500${NC}\n"
+printf "    ${GREEN}${SYM_OK}${NC} Xray ${DIM}(VLESS/VMess/Trojan)${NC}  ${DIM}8443/tcp${NC}\n"
+printf "    ${GREEN}${SYM_OK}${NC} OpenConnect              ${DIM}443/tcp${NC}\n"
+printf "    ${GREEN}${SYM_OK}${NC} AmneziaWG ${DIM}(obfuscated)${NC}    ${DIM}51821/udp${NC}\n"
 echo ""
-echo -e "  ${DIM}${SYM_ARROW}  Accept the self-signed certificate when opening the dashboard.${NC}"
+printf "  ${DIM}${SYM_ARROW} Accept the self-signed certificate when opening the dashboard.${NC}\n"
 echo ""
